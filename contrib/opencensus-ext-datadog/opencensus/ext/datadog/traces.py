@@ -84,10 +84,11 @@ class DatadogTraceExporter(base_exporter.Exporter):
         :class:`opencensus.common.transports.async_.AsyncTransport`
     :param transport: An instance of a Transport to send data with.
     """
-    def __init__(self, options, transport=sync.SyncTransport):
+    def __init__(self, options, transport=sync.SyncTransport, open_telemetry_id_conversion=False):
         self._options = options
         self._transport = transport(self)
         self._dd_transport = DDTransport(options.trace_addr)
+        self._open_telemetry_id_conversion = open_telemetry_id_conversion
 
     @property
     def transport(self):
@@ -144,10 +145,10 @@ class DatadogTraceExporter(base_exporter.Exporter):
         """
 
         spans_json = trace.get('spans')
-        trace_id = convert_id(trace.get('traceId')[8:])
+        trace_id = self.convert_id(trace.get('traceId')[8:])
         dd_trace = []
         for span in spans_json:
-            span_id_int = convert_id(span.get('spanId'))
+            span_id_int = self.convert_id(span.get('spanId'))
             # Set meta at the end.
             meta = self.options.global_tags.copy()
 
@@ -176,7 +177,7 @@ class DatadogTraceExporter(base_exporter.Exporter):
                                       1000.0 * 1000.0)
 
             if span.get('parentSpanId') is not None:
-                parent_span_id = convert_id(span.get('parentSpanId'))
+                parent_span_id = self.convert_id(span.get('parentSpanId'))
                 dd_span['parent_id'] = parent_span_id
 
             code = STATUS_CODES.get(span["status"].get("code"))
@@ -209,6 +210,13 @@ class DatadogTraceExporter(base_exporter.Exporter):
             dd_trace.append(dd_span)
 
         return dd_trace
+
+
+    def convert_id(self, str_id):
+        if self._open_telemetry_id_conversion:
+            return convert_id_open_telemetry(str_id)
+        else:
+            return convert_id(str_id)
 
 
 def atts_to_metadata(atts, meta={}):
@@ -297,6 +305,19 @@ def convert_id(str_id):
     id_cutoff_bytearray = id_bitarray[:cut_off].tobytes()
     id_int = int(codecs.encode(id_cutoff_bytearray, 'hex'), 16)
     return id_int
+
+
+def convert_id_open_telemetry(str_id):
+    """ convert_id_open_telemetry takes a 32 character hex string and converts
+    that to an 128 bit int and truncates it to 64 bits.
+
+    :type str_id: str
+    :param str_id: string id
+
+    :rtype: int
+    :returns: An int that is no more than 64 bits wide
+    """
+    return int(str_id, 16) & ((1 << 64) - 1)
 
 
 # https://opencensus.io/tracing/span/status/
